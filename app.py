@@ -1,6 +1,5 @@
 import os
 import boto3
-from langchain.llms.bedrock import Bedrock
 import chainlit as cl
 from chainlit.input_widget import Select, Slider
 from prompt_template import get_template
@@ -90,48 +89,33 @@ async def main():
 async def setup_agent(settings):
 
     bedrock_model_id = settings["Model"]
-    TEMPERATURE = settings["Temperature"]
 
     inference_parameters = dict (
-        temperature = settings["Temperature"]
+        temperature = settings["Temperature"],
+        top_p = float(settings["TopP"]),
+        top_k = int(settings["TopK"]),
+        max_tokens_to_sample = int(settings["MaxTokenCount"]),
+        stop_sequences =  []
     )
+
     request_key_mapping = {}
-    
-    llm = Bedrock(
-        region_name = AWS_REGION,
-        model_id = bedrock_model_id,
-        model_kwargs = {
-            "temperature": TEMPERATURE,
-        }
-    )
+    model_strategy = BedrockModelStrategy()
 
     provider = bedrock_model_id.split(".")[0]
 
-    TOP_P = float(settings["TopP"])
-    TOP_K = int(settings["TopK"])
-    MAX_TOKEN_SIZE = int(settings["MaxTokenCount"])
-    
-    # Model specific adjustments
     if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
-        llm.model_kwargs["top_p"] = TOP_P
-        llm.model_kwargs["top_k"] = TOP_K
-        llm.model_kwargs["max_tokens_to_sample"] = MAX_TOKEN_SIZE
+        request_key_mapping = {'top_p': 'top_p', 'top_k': 'top_k', 'max_tokens_to_sample': 'max_tokens_to_sample'}
+        model_strategy = AnthropicBedrockModelStrategy()
     elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
-        llm.model_kwargs["topP"] = TOP_P
-        llm.model_kwargs["maxTokens"] = MAX_TOKEN_SIZE
-        llm.streaming = False
+        # An error occurred (ValidationException) when calling the InvokeModelWithResponseStream operation: The model is unsupported for streaming
+        request_key_mapping = {'top_p': 'topP', 'max_tokens_to_sample': 'maxTokens'}
     elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
-        llm.model_kwargs["p"] = TOP_P
-        llm.model_kwargs["k"] = TOP_K
-        llm.model_kwargs["max_tokens"] = MAX_TOKEN_SIZE    
-        llm.model_kwargs["stream"] = True
         request_key_mapping = {'top_p': 'p', 'top_k': 'k', 'max_tokens_to_sample': 'max_tokens'}
+        model_strategy = CohereBedrockModelStrategy()
     elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
-        llm.model_kwargs["topP"] = TOP_P
-        llm.model_kwargs["maxTokenCount"] = MAX_TOKEN_SIZE
+        request_key_mapping = {'top_p': 'topP', 'max_tokens_to_sample': 'maxTokenCount'}
     elif provider == "meta": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-meta.html
-        llm.model_kwargs["top_p"] = TOP_P
-        llm.model_kwargs["max_gen_len"] = MAX_TOKEN_SIZE
+        request_key_mapping = {'top_p': 'top_p', 'max_tokens_to_sample': 'max_gen_len'}
     else:
         print(f"Unsupported Provider: {provider}")
         raise ValueError(f"Error, Unsupported Provider: {provider}")
@@ -145,6 +129,8 @@ async def setup_agent(settings):
     cl.user_session.set("bedrock_model_id", bedrock_model_id)
     cl.user_session.set("inference_parameters", inference_parameters)
     cl.user_session.set("request_key_mapping", request_key_mapping)
+    cl.user_session.set("bedrock_model_strategy", model_strategy)
+    
     
     
 
@@ -156,6 +142,7 @@ async def main(message: cl.Message):
     bedrock_model_id = cl.user_session.get("bedrock_model_id")
     inference_parameters = cl.user_session.get("inference_parameters")
     request_key_mapping = cl.user_session.get("request_key_mapping")
+    bedrock_model_strategy : BedrockModelStrategy = cl.user_session.get("bedrock_model_strategy")
 
     prompt = prompt_template.replace("{input}", message.content)
 
@@ -164,23 +151,50 @@ async def main(message: cl.Message):
     request = {
         "prompt": prompt,
         "temperature": inference_parameters.get("temperature"),
-        "top_p": 0.5,
-        "top_k": 300,
-        "max_tokens_to_sample": 2048,
+        "top_p": inference_parameters.get("top_p"), #0.5,
+        "top_k": inference_parameters.get("top_k"), #300,
+        "max_tokens_to_sample": inference_parameters.get("max_tokens_to_sample"), #2048,
         "stop_sequences": []
     }
  
     request = {request_key_mapping.get(key, key): value for key, value in request.items()}
-    print(request)
-
+    print(f"{type(request)} {request}")
 
     msg = cl.Message(content="")
+
+    await msg.send()
 
     try:
 
         response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
 
         stream = response["body"]
+        await bedrock_model_strategy.process_response_stream(stream, msg)
+
+    except Exception as e:
+        logging.error(traceback.format_exc())
+        await msg.stream_token(f"{e}")
+    finally:
+        await msg.send()
+
+    print("End")
+
+
+class BedrockModelStrategy():
+
+    def process_request(self, data: dict):
+        pass
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+        print("unknown")
+        await msg.stream_token("unknown")
+
+class AnthropicBedrockModelStrategy(BedrockModelStrategy):
+
+    def process_request(self, data: dict):
+        pass
+
+    async def process_response_stream(self, stream, msg : cl.Message):
         if stream:
             for event in stream:
                 chunk = event.get("chunk")
@@ -205,10 +219,24 @@ async def main(message: cl.Message):
                             stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
                             await msg.stream_token(f"\n\n{stats}")
 
-    except Exception as e:
-        logging.error(traceback.format_exc())
-        await msg.stream_token(f"{e}")
-    finally:
-        await msg.send()
+class CohereBedrockModelStrategy(BedrockModelStrategy):
 
-    print("End")
+    def process_request(self, data: dict):
+        pass
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+        #print("cohere")
+        #await msg.stream_token("Cohere")
+        if stream:
+            for event in stream:
+                chunk = event.get("chunk")
+                if chunk:
+                    object = json.loads(chunk.get("bytes").decode())
+                    if "generations" in object:
+                        generations = object["generations"]
+                        for generation in generations:
+                            print(generation)
+                            await msg.stream_token(generation["text"])
+                            if "finish_reason" in generation:
+                                finish_reason = generation["finish_reason"]
+                                await msg.stream_token(f"\nfinish_reason={finish_reason}")
