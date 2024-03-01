@@ -8,6 +8,9 @@ import chainlit as cl
 from chainlit.input_widget import Select, Slider
 from prompt_template import get_template
 from typing import Optional
+import json
+import traceback
+import logging
 
 AWS_REGION = os.environ["AWS_REGION"]
 AUTH_ADMIN_USR = os.environ["AUTH_ADMIN_USR"]
@@ -138,42 +141,78 @@ async def setup_agent(settings):
         print(f"Unsupported Provider: {provider}")
         raise ValueError(f"Error, Unsupported Provider: {provider}")
 
-    prompt = PromptTemplate(
-        template=get_template(provider),
-        input_variables=["history", "input"],
-    )
+    prompt_template = get_template(provider)
+
+    cl.user_session.set("prompt_template", prompt_template)
+
+    #
     
-    conversation = ConversationChain(
-        prompt=prompt, 
-        llm=llm, 
-        memory=ConversationBufferMemory(
-            human_prefix=human_prefix,
-            ai_prefix=ai_prefix
-        ),
-        verbose=True,
-    )
-    # Set ConversationChain to the user session
-    cl.user_session.set("llm_chain", conversation)
-    cl.user_session.set("llm_streaming", llm.streaming)
+    bedrock_runtime = boto3.client('bedrock-runtime', region_name=AWS_REGION)
+    cl.user_session.set("bedrock_runtime", bedrock_runtime)
+    cl.user_session.set("llm_provider", provider)
+    
     
 
 @cl.on_message
 async def main(message: cl.Message):
-    # Get ConversationChain from the user session
-    conversation = cl.user_session.get("llm_chain") 
-    llm_streaming = cl.user_session.get("llm_streaming") 
-    # InvokeModel and InvokeModelWithResponseStream
-    if llm_streaming:
-        res = await conversation.ainvoke(
-            message.content, 
-            callbacks=[cl.AsyncLangchainCallbackHandler()],
-        )
-        #print(res)
-        await cl.Message(content=res["response"]).send()
-    else:
-        res = conversation.invoke(
-            message.content, 
-            callbacks=[cl.LangchainCallbackHandler()],
-        )
-        #print(res)
-        await cl.Message(content=res["response"]).send()
+
+    prompt_template = cl.user_session.get("prompt_template") 
+    bedrock_runtime = cl.user_session.get("bedrock_runtime")
+    llm_provider = cl.user_session.get("llm_provider")
+
+    prompt = prompt_template.replace("{input}", message.content)
+
+    print(llm_provider)
+    print(prompt)
+
+    request = {
+        "prompt": prompt,
+        "temperature": 0.0,
+        "top_p": 0.5,
+        "top_k": 300,
+        "max_tokens_to_sample": 2048,
+        "stop_sequences": []
+        }
+
+    msg = cl.Message(content="")
+
+    try:
+
+        response = bedrock_runtime.invoke_model_with_response_stream(modelId = "anthropic.claude-v2", body = json.dumps(request))
+
+        stream = response["body"]
+        if stream:
+            for event in stream:
+                chunk = event.get("chunk")
+                if chunk:
+                    object = json.loads(chunk.get("bytes").decode())
+                    completion = object["completion"]
+                    stop_reason = object["stop_reason"]
+                    print(completion)
+                    await msg.stream_token(completion)
+                    if stop_reason == 'stop_sequence':
+                        invocation_metrics = object["amazon-bedrock-invocationMetrics"]
+                        if invocation_metrics:
+                            input_token_count = invocation_metrics["inputTokenCount"]
+                            output_token_count = invocation_metrics["outputTokenCount"]
+                            latency = invocation_metrics["invocationLatency"]
+                            lag = invocation_metrics["firstByteLatency"]
+                            stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
+                            await msg.stream_token(f"\n{stats}\n")
+
+    except Exception as e:
+        logging.error(traceback.format_exc())
+    finally:
+        await msg.send()
+
+    print("End")
+
+#{'completion': ',', 'stop_reason': None, 'stop': None}
+#{'completion': '918', 'stop_reason': None, 'stop': None}
+#{'completion': ' miles', 'stop_reason': None, 'stop': None}
+#{'completion': ').', 'stop_reason': None, 'stop': None}
+#{'completion': '', 'stop_reason': 'stop_sequence', 'stop': '\n\nHuman:', 'amazon-bedrock-invocationMetrics': {'inputTokenCount': 91, 'outputTokenCount': 35, 'invocationLatency': 2013, 'firstByteLatency': 435}}
+
+#{'completion': '', 'stop_reason': 'stop_sequence', 
+# 'stop': '\n\nHuman:', 
+# 'amazon-bedrock-invocationMetrics': {'inputTokenCount': 17, 'outputTokenCount': 20, 'invocationLatency': 1526, 'firstByteLatency': 1018}}

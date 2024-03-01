@@ -3,9 +3,6 @@ def get_template(provider):
         "anthropic": """The following is a friendly conversation between a Human and an AI.
 The AI is talkative and provides lots of specific details from its context, in its original language. If the AI does not know the answer to a question, it truthfully says it does not know.
 Do not use any XML tags in the answer.
-<conversation_history>
-{history}
-</conversation_history>
 
 Human: {input}
     
