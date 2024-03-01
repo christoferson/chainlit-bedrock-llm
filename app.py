@@ -1,8 +1,5 @@
 import os
 import boto3
-from langchain.prompts import PromptTemplate 
-from langchain.chains import ConversationChain
-from langchain.memory import ConversationBufferMemory
 from langchain.llms.bedrock import Bedrock
 import chainlit as cl
 from chainlit.input_widget import Select, Slider
@@ -91,25 +88,24 @@ async def main():
 
 @cl.on_settings_update
 async def setup_agent(settings):
-    #global bedrock_model_id
+
     bedrock_model_id = settings["Model"]
+    TEMPERATURE = settings["Temperature"]
+
+    inference_parameters = dict (
+        temperature = settings["Temperature"]
+    )
+    request_key_mapping = {}
     
     llm = Bedrock(
         region_name = AWS_REGION,
-        model_id = settings["Model"],
+        model_id = bedrock_model_id,
         model_kwargs = {
-            "temperature": settings["Temperature"],
-            #"top_p": settings["TopP"],
-            #"top_k": int(settings["TopK"]),
-            #"max_tokens_to_sample": int(settings["MaxTokenCount"]),
-        },
-        streaming = True, #Streaming must be set to True for async operations.
+            "temperature": TEMPERATURE,
+        }
     )
 
     provider = bedrock_model_id.split(".")[0]
-    
-    human_prefix="Human"
-    ai_prefix="AI"
 
     TOP_P = float(settings["TopP"])
     TOP_K = int(settings["TopK"])
@@ -120,8 +116,6 @@ async def setup_agent(settings):
         llm.model_kwargs["top_p"] = TOP_P
         llm.model_kwargs["top_k"] = TOP_K
         llm.model_kwargs["max_tokens_to_sample"] = MAX_TOKEN_SIZE
-        human_prefix="H"
-        ai_prefix="A"
     elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
         llm.model_kwargs["topP"] = TOP_P
         llm.model_kwargs["maxTokens"] = MAX_TOKEN_SIZE
@@ -131,6 +125,7 @@ async def setup_agent(settings):
         llm.model_kwargs["k"] = TOP_K
         llm.model_kwargs["max_tokens"] = MAX_TOKEN_SIZE    
         llm.model_kwargs["stream"] = True
+        request_key_mapping = {'top_p': 'p', 'top_k': 'k', 'max_tokens_to_sample': 'max_tokens'}
     elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
         llm.model_kwargs["topP"] = TOP_P
         llm.model_kwargs["maxTokenCount"] = MAX_TOKEN_SIZE
@@ -144,12 +139,12 @@ async def setup_agent(settings):
     prompt_template = get_template(provider)
 
     cl.user_session.set("prompt_template", prompt_template)
-
-    #
     
     bedrock_runtime = boto3.client('bedrock-runtime', region_name=AWS_REGION)
     cl.user_session.set("bedrock_runtime", bedrock_runtime)
-    cl.user_session.set("llm_provider", provider)
+    cl.user_session.set("bedrock_model_id", bedrock_model_id)
+    cl.user_session.set("inference_parameters", inference_parameters)
+    cl.user_session.set("request_key_mapping", request_key_mapping)
     
     
 
@@ -158,27 +153,32 @@ async def main(message: cl.Message):
 
     prompt_template = cl.user_session.get("prompt_template") 
     bedrock_runtime = cl.user_session.get("bedrock_runtime")
-    llm_provider = cl.user_session.get("llm_provider")
+    bedrock_model_id = cl.user_session.get("bedrock_model_id")
+    inference_parameters = cl.user_session.get("inference_parameters")
+    request_key_mapping = cl.user_session.get("request_key_mapping")
 
     prompt = prompt_template.replace("{input}", message.content)
 
-    print(llm_provider)
-    print(prompt)
+    print(request_key_mapping)
 
     request = {
         "prompt": prompt,
-        "temperature": 0.0,
+        "temperature": inference_parameters.get("temperature"),
         "top_p": 0.5,
         "top_k": 300,
         "max_tokens_to_sample": 2048,
         "stop_sequences": []
-        }
+    }
+ 
+    request = {request_key_mapping.get(key, key): value for key, value in request.items()}
+    print(request)
+
 
     msg = cl.Message(content="")
 
     try:
 
-        response = bedrock_runtime.invoke_model_with_response_stream(modelId = "anthropic.claude-v2", body = json.dumps(request))
+        response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
 
         stream = response["body"]
         if stream:
@@ -186,10 +186,15 @@ async def main(message: cl.Message):
                 chunk = event.get("chunk")
                 if chunk:
                     object = json.loads(chunk.get("bytes").decode())
-                    completion = object["completion"]
-                    stop_reason = object["stop_reason"]
-                    print(completion)
-                    await msg.stream_token(completion)
+                    #print(object)
+                    if "completion" in object:
+                        completion = object["completion"]
+                        #print(completion)
+                        await msg.stream_token(completion)
+                    stop_reason = None
+                    if "stop_reason" in object:
+                        stop_reason = object["stop_reason"]
+                    
                     if stop_reason == 'stop_sequence':
                         invocation_metrics = object["amazon-bedrock-invocationMetrics"]
                         if invocation_metrics:
@@ -198,21 +203,12 @@ async def main(message: cl.Message):
                             latency = invocation_metrics["invocationLatency"]
                             lag = invocation_metrics["firstByteLatency"]
                             stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
-                            await msg.stream_token(f"\n{stats}\n")
+                            await msg.stream_token(f"\n\n{stats}")
 
     except Exception as e:
         logging.error(traceback.format_exc())
+        await msg.stream_token(f"{e}")
     finally:
         await msg.send()
 
     print("End")
-
-#{'completion': ',', 'stop_reason': None, 'stop': None}
-#{'completion': '918', 'stop_reason': None, 'stop': None}
-#{'completion': ' miles', 'stop_reason': None, 'stop': None}
-#{'completion': ').', 'stop_reason': None, 'stop': None}
-#{'completion': '', 'stop_reason': 'stop_sequence', 'stop': '\n\nHuman:', 'amazon-bedrock-invocationMetrics': {'inputTokenCount': 91, 'outputTokenCount': 35, 'invocationLatency': 2013, 'firstByteLatency': 435}}
-
-#{'completion': '', 'stop_reason': 'stop_sequence', 
-# 'stop': '\n\nHuman:', 
-# 'amazon-bedrock-invocationMetrics': {'inputTokenCount': 17, 'outputTokenCount': 20, 'invocationLatency': 1526, 'firstByteLatency': 1018}}

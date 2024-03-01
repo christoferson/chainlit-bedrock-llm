@@ -1,7 +1,12 @@
-# Chat powered by Chainlit + Amazon Bedrock 🚀🤖
+# Chat powered by Chainlit + Amazon Bedrock (LLM)
 
 ## About
-Chat application to showcase Amazon Bedrock, using Chainlit and LangChain.  
+Chainlit Chat application to showcase Amazon Bedrock.
+
+KnowledgeBase = [No]
+Bedrock.Agents = [No]
+Langchain = [No]
+
 Settings are available to select from multiple models as well as set inference parameters.
 Version 1.1 Feb 24 2024
 
