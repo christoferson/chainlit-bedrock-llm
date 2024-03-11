@@ -47,8 +47,11 @@ async def main():
             Select(
                 id="Model",
                 label="Amazon Bedrock - Model",
-                values=model_ids, #meta.llama2-13b-chat-v1
-                initial_index=model_ids.index("amazon.titan-text-express-v1"), #initial_index=model_ids.index("anthropic.claude-v2"),
+                values=model_ids,
+                initial_index=model_ids.index("ai21.j2-mid"), 
+                #initial_index=model_ids.index("meta.llama2-13b-chat-v1"), 
+                #initial_index=model_ids.index("amazon.titan-text-express-v1"), 
+                #initial_index=model_ids.index("anthropic.claude-v2"),
             ),
             Slider(
                 id="Temperature",
@@ -99,25 +102,19 @@ async def setup_agent(settings):
         stop_sequences =  []
     )
 
-    request_key_mapping = {}
     model_strategy = BedrockModelStrategy()
 
     provider = bedrock_model_id.split(".")[0]
 
     if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
-        request_key_mapping = {'top_p': 'top_p', 'top_k': 'top_k', 'max_tokens_to_sample': 'max_tokens_to_sample'}
         model_strategy = AnthropicBedrockModelStrategy()
     elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
-        # An error occurred (ValidationException) when calling the InvokeModelWithResponseStream operation: The model is unsupported for streaming
-        request_key_mapping = {'top_p': 'topP', 'max_tokens_to_sample': 'maxTokens'}
+        model_strategy = AI21BedrockModelStrategy()
     elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
-        request_key_mapping = {'top_p': 'p', 'top_k': 'k', 'max_tokens_to_sample': 'max_tokens'}
         model_strategy = CohereBedrockModelStrategy()
     elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
-        #request_key_mapping = {'top_p': 'topP', 'max_tokens_to_sample': 'maxTokenCount'}
         model_strategy = TitanBedrockModelStrategy()
     elif provider == "meta": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-meta.html
-        #request_key_mapping = {'top_p': 'top_p', 'max_tokens_to_sample': 'max_gen_len'}
         model_strategy = MetaBedrockModelStrategy()
     else:
         print(f"Unsupported Provider: {provider}")
@@ -131,7 +128,6 @@ async def setup_agent(settings):
     cl.user_session.set("bedrock_runtime", bedrock_runtime)
     cl.user_session.set("bedrock_model_id", bedrock_model_id)
     cl.user_session.set("inference_parameters", inference_parameters)
-    cl.user_session.set("request_key_mapping", request_key_mapping)
     cl.user_session.set("bedrock_model_strategy", model_strategy)
     
     
@@ -144,16 +140,12 @@ async def main(message: cl.Message):
     bedrock_runtime = cl.user_session.get("bedrock_runtime")
     bedrock_model_id = cl.user_session.get("bedrock_model_id")
     inference_parameters = cl.user_session.get("inference_parameters")
-    request_key_mapping = cl.user_session.get("request_key_mapping")
     bedrock_model_strategy : BedrockModelStrategy = cl.user_session.get("bedrock_model_strategy")
 
     prompt = prompt_template.replace("{input}", message.content)
 
-    print(request_key_mapping)
-
     request = bedrock_model_strategy.create_request(inference_parameters, prompt)
  
-    request = {request_key_mapping.get(key, key): value for key, value in request.items()}
     print(f"{type(request)} {request}")
 
     msg = cl.Message(content="")
@@ -162,7 +154,8 @@ async def main(message: cl.Message):
 
     try:
 
-        response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
+        #response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
+        response = bedrock_model_strategy.send_request(request, bedrock_runtime, bedrock_model_id)
 
         stream = response["body"]
         await bedrock_model_strategy.process_response_stream(stream, msg)
@@ -180,6 +173,10 @@ class BedrockModelStrategy():
 
     def create_request(self, inference_parameters: dict, prompt : str) -> dict:
         pass
+
+    def send_request(self, request:dict, bedrock_runtime, bedrock_model_id:str):
+        response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
+        return response
 
     async def process_response_stream(self, stream, msg : cl.Message):
         print("unknown")
@@ -309,21 +306,20 @@ class MetaBedrockModelStrategy(BedrockModelStrategy):
         return request
 
     async def process_response_stream(self, stream, msg : cl.Message):
-        print("titan")
-        await msg.stream_token("Titan")
+        print("meta")
+        await msg.stream_token("Meta")
         if stream:
             for event in stream:
                 chunk = event.get("chunk")
                 if chunk:
                     object = json.loads(chunk.get("bytes").decode())
                     print(object)
-                    if "outputText" in object:
-                        completion = object["outputText"]
+                    if "generation" in object:
+                        completion = object["generation"]
                         await msg.stream_token(completion)
-                    if "completionReason" in object:
-                        finish_reason = object["completionReason"]
+                    if "stop_reason" in object:
+                        finish_reason = object["stop_reason"]
                         if finish_reason:
-                            await msg.stream_token(f"\{stats}")
                             if "amazon-bedrock-invocationMetrics" in object:
                                 invocation_metrics = object["amazon-bedrock-invocationMetrics"]
                                 if invocation_metrics:
@@ -333,3 +329,30 @@ class MetaBedrockModelStrategy(BedrockModelStrategy):
                                     lag = invocation_metrics["firstByteLatency"]
                                     stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag} finish_reason={finish_reason}"
                                     await msg.stream_token(f"\n\n{stats}")
+
+
+class AI21BedrockModelStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+        request = {
+            "prompt": prompt,           
+            "temperature": inference_parameters.get("temperature"),
+            "topP": inference_parameters.get("top_p"), #0.5,
+            #"top_k": inference_parameters.get("top_k"), #300,
+            "maxTokens": inference_parameters.get("max_tokens_to_sample"), #2048,
+            #"stop_sequences": []
+        }
+        return request
+
+    def send_request(self, request:dict, bedrock_runtime, bedrock_model_id:str):
+        response = bedrock_runtime.invoke_model(modelId = bedrock_model_id, body = json.dumps(request))
+        return response
+    
+    async def process_response_stream(self, stream, msg : cl.Message):
+        #await msg.stream_token(f"AI21")
+        
+        object = json.loads(stream.read())
+        #print(object)
+        #print(object.get('completions')[0].get('data').get('text'))
+        text = object.get('completions')[0].get('data').get('text')
+        await msg.stream_token(f"{text}")
