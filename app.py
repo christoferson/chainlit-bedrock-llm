@@ -7,6 +7,7 @@ from typing import Optional
 import json
 import traceback
 import logging
+import app_bedrock
 
 AWS_REGION = os.environ["AWS_REGION"]
 AUTH_ADMIN_USR = os.environ["AUTH_ADMIN_USR"]
@@ -102,12 +103,12 @@ async def setup_agent(settings):
         stop_sequences =  []
     )
 
-    model_strategy = BedrockModelStrategy()
+    model_strategy = app_bedrock.BedrockModelStrategyFactory.create(bedrock_model_id) #BedrockModelStrategy()
 
     provider = bedrock_model_id.split(".")[0]
 
     if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
-        model_strategy = AnthropicBedrockModelStrategy()
+        pass #model_strategy = AnthropicBedrockModelStrategy()
     elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
         model_strategy = AI21BedrockModelStrategy()
     elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
