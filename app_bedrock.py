@@ -29,6 +29,8 @@ class BedrockModelStrategyFactory():
 
         if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
             model_strategy = AnthropicBedrockModelStrategy()
+        elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
+            model_strategy = CohereBedrockModelStrategy()
         else:
             #raise ValueError(f"Not Supported Model. Model={bedrock_model_id} Provide={provider}")
             model_strategy = BedrockModelStrategy()
@@ -73,3 +75,33 @@ class AnthropicBedrockModelStrategy(BedrockModelStrategy):
                             lag = invocation_metrics["firstByteLatency"]
                             stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
                             await msg.stream_token(f"\n\n{stats}")
+
+class CohereBedrockModelStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+        request = {
+            "prompt": prompt,
+            "temperature": inference_parameters.get("temperature"),
+            "top_p": inference_parameters.get("top_p"), #0.5,
+            "top_k": inference_parameters.get("top_k"), #300,
+            "max_tokens_to_sample": inference_parameters.get("max_tokens_to_sample"), #2048,
+            #"stop_sequences": []
+        }
+        return request
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+        #print("cohere")
+        #await msg.stream_token("Cohere")
+        if stream:
+            for event in stream:
+                chunk = event.get("chunk")
+                if chunk:
+                    object = json.loads(chunk.get("bytes").decode())
+                    if "generations" in object:
+                        generations = object["generations"]
+                        for generation in generations:
+                            print(generation)
+                            await msg.stream_token(generation["text"])
+                            if "finish_reason" in generation:
+                                finish_reason = generation["finish_reason"]
+                                await msg.stream_token(f"\nfinish_reason={finish_reason}")
