@@ -116,7 +116,7 @@ async def setup_agent(settings):
     elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
         pass #model_strategy = TitanBedrockModelStrategy()
     elif provider == "meta": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-meta.html
-        model_strategy = MetaBedrockModelStrategy()
+        pass #model_strategy = MetaBedrockModelStrategy()
     elif provider == "mistral": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-mistral.html
         model_strategy = MistralBedrockModelStrategy()
     else:
@@ -146,9 +146,11 @@ async def main(message: cl.Message):
     bedrock_model_strategy : app_bedrock.BedrockModelStrategy = cl.user_session.get("bedrock_model_strategy")
 
     prompt = prompt_template.replace("{input}", message.content)
-
+    prompt = prompt.replace("{history}", "")
+    #print(prompt)
+    #print(inference_parameters)
     request = bedrock_model_strategy.create_request(inference_parameters, prompt)
- 
+    #print(request)
     print(f"{type(request)} {request}")
 
     msg = cl.Message(content="")
