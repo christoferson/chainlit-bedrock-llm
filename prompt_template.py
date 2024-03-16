@@ -43,6 +43,13 @@ Chat History:{history}
 Human:{input}
 
 Assistant:""",
+
+"mistral": """<s>[INST]You are an excellent assistant.
+The following is a friendly conversation between a Human and an Assistant.
+The AI is talkative and provides lots of specific details from its context. If the AI does not know the answer to a question, it truthfully says it does not know.[/INST]
+[INST]{history}[/INST]
+[INST]{input}[/INST]""",
+
     }
     
     return templates.get(provider, "anthropic")

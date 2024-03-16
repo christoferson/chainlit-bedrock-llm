@@ -112,11 +112,13 @@ async def setup_agent(settings):
     elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
         model_strategy = AI21BedrockModelStrategy()
     elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
-        model_strategy = CohereBedrockModelStrategy()
+        pass #model_strategy = CohereBedrockModelStrategy()
     elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
-        model_strategy = TitanBedrockModelStrategy()
+        pass #model_strategy = TitanBedrockModelStrategy()
     elif provider == "meta": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-meta.html
         model_strategy = MetaBedrockModelStrategy()
+    elif provider == "mistral": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-mistral.html
+        model_strategy = MistralBedrockModelStrategy()
     else:
         print(f"Unsupported Provider: {provider}")
         raise ValueError(f"Error, Unsupported Provider: {provider}")
@@ -141,7 +143,7 @@ async def main(message: cl.Message):
     bedrock_runtime = cl.user_session.get("bedrock_runtime")
     bedrock_model_id = cl.user_session.get("bedrock_model_id")
     inference_parameters = cl.user_session.get("inference_parameters")
-    bedrock_model_strategy : BedrockModelStrategy = cl.user_session.get("bedrock_model_strategy")
+    bedrock_model_strategy : app_bedrock.BedrockModelStrategy = cl.user_session.get("bedrock_model_strategy")
 
     prompt = prompt_template.replace("{input}", message.content)
 
@@ -357,3 +359,46 @@ class AI21BedrockModelStrategy(BedrockModelStrategy):
         #print(object.get('completions')[0].get('data').get('text'))
         text = object.get('completions')[0].get('data').get('text')
         await msg.stream_token(f"{text}")
+
+
+
+
+class MistralBedrockModelStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+        request = {
+            "prompt": prompt,
+            "temperature": inference_parameters.get("temperature"),
+            "top_p": inference_parameters.get("top_p"), #0.5,
+            "top_k": inference_parameters.get("top_k"), #300,
+            "max_tokens": inference_parameters.get("max_tokens_to_sample"), #2048,
+            #"stop_sequences": []
+        }
+        return request
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+        if stream:
+            for event in stream:
+                #print(f"Event: {event}")
+                chunk = event.get("chunk")
+                if chunk:
+                    object = json.loads(chunk.get("bytes").decode())
+                    #print(object)
+                    if "outputs" in object:
+                        outputs = object["outputs"]
+                        for index, output in enumerate(outputs):
+                            await msg.stream_token(output["text"])
+
+                            stop_reason = None
+                            if "stop_reason" in output:
+                                stop_reason = output["stop_reason"]
+                            
+                            if stop_reason == 'stop' or stop_reason == 'length':
+                                invocation_metrics = object["amazon-bedrock-invocationMetrics"]
+                                if invocation_metrics:
+                                    input_token_count = invocation_metrics["inputTokenCount"]
+                                    output_token_count = invocation_metrics["outputTokenCount"]
+                                    latency = invocation_metrics["invocationLatency"]
+                                    lag = invocation_metrics["firstByteLatency"]
+                                    stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
+                                    await msg.stream_token(f"\n\n{stats}")

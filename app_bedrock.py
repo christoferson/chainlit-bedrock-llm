@@ -31,6 +31,8 @@ class BedrockModelStrategyFactory():
             model_strategy = AnthropicBedrockModelStrategy()
         elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
             model_strategy = CohereBedrockModelStrategy()
+        elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
+            model_strategy = TitanBedrockModelStrategy()
         else:
             #raise ValueError(f"Not Supported Model. Model={bedrock_model_id} Provide={provider}")
             model_strategy = BedrockModelStrategy()
@@ -82,9 +84,10 @@ class CohereBedrockModelStrategy(BedrockModelStrategy):
         request = {
             "prompt": prompt,
             "temperature": inference_parameters.get("temperature"),
-            "top_p": inference_parameters.get("top_p"), #0.5,
-            "top_k": inference_parameters.get("top_k"), #300,
-            "max_tokens_to_sample": inference_parameters.get("max_tokens_to_sample"), #2048,
+            "p": inference_parameters.get("top_p"), #0.5,
+            "k": inference_parameters.get("top_k"), #300,
+            "max_tokens": inference_parameters.get("max_tokens_to_sample"), #2048,
+            "stream": True,
             #"stop_sequences": []
         }
         return request
@@ -105,3 +108,45 @@ class CohereBedrockModelStrategy(BedrockModelStrategy):
                             if "finish_reason" in generation:
                                 finish_reason = generation["finish_reason"]
                                 await msg.stream_token(f"\nfinish_reason={finish_reason}")
+
+
+class TitanBedrockModelStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+        request = {
+            "inputText": prompt,
+            "textGenerationConfig": {
+                "temperature": inference_parameters.get("temperature"),
+                "topP": inference_parameters.get("top_p"), #0.5,
+                #"top_k": inference_parameters.get("top_k"), #300,
+                "maxTokenCount": inference_parameters.get("max_tokens_to_sample"), #2048,
+                #"stop_sequences": []
+            }
+        }
+        return request
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+        #print("titan")
+        #await msg.stream_token("Titan")
+        if stream:
+            for event in stream:
+                chunk = event.get("chunk")
+                if chunk:
+                    object = json.loads(chunk.get("bytes").decode())
+                    #print(object)
+                    if "outputText" in object:
+                        completion = object["outputText"]
+                        await msg.stream_token(completion)
+                    if "completionReason" in object:
+                        finish_reason = object["completionReason"]
+                        if finish_reason:
+                            if "amazon-bedrock-invocationMetrics" in object:
+                                invocation_metrics = object["amazon-bedrock-invocationMetrics"]
+                                if invocation_metrics:
+                                    input_token_count = invocation_metrics["inputTokenCount"]
+                                    output_token_count = invocation_metrics["outputTokenCount"]
+                                    latency = invocation_metrics["invocationLatency"]
+                                    lag = invocation_metrics["firstByteLatency"]
+                                    stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag} finish_reason={finish_reason}"
+                                    await msg.stream_token(f"\n\n{stats}")
+
