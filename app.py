@@ -110,7 +110,7 @@ async def setup_agent(settings):
     if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
         pass #model_strategy = AnthropicBedrockModelStrategy()
     elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
-        model_strategy = AI21BedrockModelStrategy()
+        pass #model_strategy = AI21BedrockModelStrategy()
     elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
         pass #model_strategy = CohereBedrockModelStrategy()
     elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html

@@ -29,6 +29,8 @@ class BedrockModelStrategyFactory():
 
         if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
             model_strategy = AnthropicBedrockModelStrategy()
+        elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
+            model_strategy = AI21BedrockModelStrategy()
         elif provider == "cohere": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command.html
             model_strategy = CohereBedrockModelStrategy()
         elif provider == "amazon": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-text.html
@@ -189,3 +191,31 @@ class MetaBedrockModelStrategy(BedrockModelStrategy):
                                     lag = invocation_metrics["firstByteLatency"]
                                     stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag} finish_reason={finish_reason}"
                                     await msg.stream_token(f"\n\n{stats}")
+
+
+
+class AI21BedrockModelStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+        request = {
+            "prompt": prompt,           
+            "temperature": inference_parameters.get("temperature"),
+            "topP": inference_parameters.get("top_p"), #0.5,
+            #"top_k": inference_parameters.get("top_k"), #300,
+            "maxTokens": inference_parameters.get("max_tokens_to_sample"), #2048,
+            #"stop_sequences": []
+        }
+        return request
+
+    def send_request(self, request:dict, bedrock_runtime, bedrock_model_id:str):
+        response = bedrock_runtime.invoke_model(modelId = bedrock_model_id, body = json.dumps(request))
+        return response
+    
+    async def process_response_stream(self, stream, msg : cl.Message):
+        #await msg.stream_token(f"AI21")
+        
+        object = json.loads(stream.read())
+        #print(object)
+        #print(object.get('completions')[0].get('data').get('text'))
+        text = object.get('completions')[0].get('data').get('text')
+        await msg.stream_token(f"{text}")
