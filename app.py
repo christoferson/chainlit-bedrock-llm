@@ -118,7 +118,7 @@ async def setup_agent(settings):
     elif provider == "meta": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-meta.html
         pass #model_strategy = MetaBedrockModelStrategy()
     elif provider == "mistral": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-mistral.html
-        model_strategy = MistralBedrockModelStrategy()
+        pass #model_strategy = MistralBedrockModelStrategy()
     else:
         print(f"Unsupported Provider: {provider}")
         raise ValueError(f"Error, Unsupported Provider: {provider}")
