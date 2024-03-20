@@ -49,10 +49,10 @@ async def main():
                 id="Model",
                 label="Amazon Bedrock - Model",
                 values=model_ids,
-                initial_index=model_ids.index("ai21.j2-mid"), 
+                #initial_index=model_ids.index("ai21.j2-mid"), 
                 #initial_index=model_ids.index("meta.llama2-13b-chat-v1"), 
                 #initial_index=model_ids.index("amazon.titan-text-express-v1"), 
-                #initial_index=model_ids.index("anthropic.claude-v2"),
+                initial_index=model_ids.index("anthropic.claude-v2"),
             ),
             Slider(
                 id="Temperature",
@@ -133,8 +133,6 @@ async def setup_agent(settings):
     cl.user_session.set("inference_parameters", inference_parameters)
     cl.user_session.set("bedrock_model_strategy", model_strategy)
     
-    
-    
 
 @cl.on_message
 async def main(message: cl.Message):
@@ -162,8 +160,9 @@ async def main(message: cl.Message):
         #response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
         response = bedrock_model_strategy.send_request(request, bedrock_runtime, bedrock_model_id)
 
-        stream = response["body"]
-        await bedrock_model_strategy.process_response_stream(stream, msg)
+        #stream = response["body"]
+        #await bedrock_model_strategy.process_response_stream(stream, msg)
+        await bedrock_model_strategy.process_response(response, msg)
 
     except Exception as e:
         logging.error(traceback.format_exc())

@@ -27,7 +27,9 @@ class BedrockModelStrategyFactory():
 
         provider = bedrock_model_id.split(".")[0]
 
-        if provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
+        if bedrock_model_id.startswith("anthropic.claude-3"): #"anthropic.claude-3-sonnet-20240229-v1:0": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
+            model_strategy = AnthropicClaude3MsgBedrockModelStrategy()
+        elif provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
             model_strategy = AnthropicBedrockModelStrategy()
         elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
             model_strategy = AI21BedrockModelStrategy()
@@ -83,6 +85,44 @@ class AnthropicBedrockModelStrategy(BedrockModelStrategy):
                             lag = invocation_metrics["firstByteLatency"]
                             stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
                             await msg.stream_token(f"\n\n{stats}")
+
+class AnthropicClaude3MsgBedrockModelStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+
+        user_message =  {"role": "user", "content": f"{prompt}"}
+        messages = [user_message]
+
+        request = {
+            "anthropic_version": "bedrock-2023-05-31",
+            #"prompt": prompt,
+            "temperature": inference_parameters.get("temperature"),
+            "top_p": inference_parameters.get("top_p"), #0.5,
+            "top_k": inference_parameters.get("top_k"), #300,
+            "max_tokens": inference_parameters.get("max_tokens_to_sample"), #2048,
+            #"system": system_prompt,
+            "messages": messages
+            #"stop_sequences": []
+        }
+        return request
+
+    def send_request(self, request:dict, bedrock_runtime, bedrock_model_id:str):
+        response = bedrock_runtime.invoke_model(modelId = bedrock_model_id, body = json.dumps(request))
+        print(response)
+        return response
+
+    async def process_response(self, response, msg : cl.Message):
+        response_body = json.loads(response.get('body').read())
+        print(response_body)
+        contents = response_body["content"]
+        for content in contents:
+            await msg.stream_token(f"{content['text']}")
+        usage = response_body["usage"]
+        await msg.stream_token(f"token.in={usage['input_tokens']},token.out={usage['output_tokens']}")
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+        pass
+
 
 class CohereBedrockModelStrategy(BedrockModelStrategy):
 
