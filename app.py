@@ -52,7 +52,9 @@ async def main():
                 #initial_index=model_ids.index("ai21.j2-mid"), 
                 #initial_index=model_ids.index("meta.llama2-13b-chat-v1"), 
                 #initial_index=model_ids.index("amazon.titan-text-express-v1"), 
-                initial_index=model_ids.index("anthropic.claude-v2"),
+                #initial_index=model_ids.index("anthropic.claude-v2"),
+                initial_index=model_ids.index("anthropic.claude-3-sonnet-20240229-v1:0"),
+                
             ),
             Slider(
                 id="Temperature",
@@ -81,7 +83,7 @@ async def main():
             Slider(
                 id="MaxTokenCount",
                 label="Max Token Size",
-                initial=1024,
+                initial=2048,
                 min=256,
                 max=4096,
                 step=256,
@@ -100,6 +102,7 @@ async def setup_agent(settings):
         top_p = float(settings["TopP"]),
         top_k = int(settings["TopK"]),
         max_tokens_to_sample = int(settings["MaxTokenCount"]),
+        system_message = "You are a helpful assistant.",
         stop_sequences =  []
     )
 
@@ -124,6 +127,8 @@ async def setup_agent(settings):
         raise ValueError(f"Error, Unsupported Provider: {provider}")
 
     prompt_template = get_template(provider)
+    if bedrock_model_id.startswith("anthropic.claude-3"):
+        prompt_template = '{input}'
 
     cl.user_session.set("prompt_template", prompt_template)
     

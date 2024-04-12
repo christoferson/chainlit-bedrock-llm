@@ -28,7 +28,8 @@ class BedrockModelStrategyFactory():
         provider = bedrock_model_id.split(".")[0]
 
         if bedrock_model_id.startswith("anthropic.claude-3"): #"anthropic.claude-3-sonnet-20240229-v1:0": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html
-            model_strategy = AnthropicClaude3MsgBedrockModelStrategy()
+            #model_strategy = AnthropicClaude3MsgBedrockModelStrategy()
+            model_strategy = AnthropicClaude3MsgBedrockModelAsyncStrategy()
         elif provider == "anthropic": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-claude.html
             model_strategy = AnthropicBedrockModelStrategy()
         elif provider == "ai21": # https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-jurassic2.html
@@ -123,6 +124,59 @@ class AnthropicClaude3MsgBedrockModelStrategy(BedrockModelStrategy):
     async def process_response_stream(self, stream, msg : cl.Message):
         pass
 
+class AnthropicClaude3MsgBedrockModelAsyncStrategy(BedrockModelStrategy):
+
+    def create_request(self, inference_parameters: dict, prompt : str) -> dict:
+
+        user_message =  {"role": "user", "content": f"{prompt}"}
+        messages = [user_message]
+
+        request = {
+            "anthropic_version": "bedrock-2023-05-31",
+            #"prompt": prompt,
+            "temperature": inference_parameters.get("temperature"),
+            "top_p": inference_parameters.get("top_p"), #0.5,
+            "top_k": inference_parameters.get("top_k"), #300,
+            "max_tokens": inference_parameters.get("max_tokens_to_sample"), #2048,
+            "system": inference_parameters.get("system_message") if inference_parameters.get("system_message") else  "You are a helpful assistant.",
+            "messages": messages
+            #"stop_sequences": []
+        }
+        return request
+
+    def send_request(self, request:dict, bedrock_runtime, bedrock_model_id:str):
+        response = bedrock_runtime.invoke_model_with_response_stream(modelId = bedrock_model_id, body = json.dumps(request))
+        print(response)
+        return response
+
+    async def process_response_stream(self, stream, msg : cl.Message):
+
+        for event in stream:
+            chunk = json.loads(event["chunk"]["bytes"])
+
+            if chunk['type'] == 'message_start':
+                #print(f"Input Tokens: {chunk['message']['usage']['input_tokens']}")
+                pass
+
+            elif chunk['type'] == 'message_delta':
+                #print(f"\nStop reason: {chunk['delta']['stop_reason']}")
+                #print(f"Stop sequence: {chunk['delta']['stop_sequence']}")
+                #print(f"Output tokens: {chunk['usage']['output_tokens']}")
+                pass
+
+            elif chunk['type'] == 'content_block_delta':
+                if chunk['delta']['type'] == 'text_delta':
+                    text = chunk['delta']['text']
+                    await msg.stream_token(f"{text}")
+
+            elif chunk['type'] == 'message_stop':
+                invocation_metrics = chunk['amazon-bedrock-invocationMetrics']
+                input_token_count = invocation_metrics["inputTokenCount"]
+                output_token_count = invocation_metrics["outputTokenCount"]
+                latency = invocation_metrics["invocationLatency"]
+                lag = invocation_metrics["firstByteLatency"]
+                stats = f"token.in={input_token_count} token.out={output_token_count} latency={latency} lag={lag}"
+                await msg.stream_token(f"\n\n{stats}")
 
 class CohereBedrockModelStrategy(BedrockModelStrategy):
 
